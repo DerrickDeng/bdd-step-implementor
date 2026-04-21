@@ -1,0 +1,10 @@
+1. detect case finish - a.scenario 0  b.existing step failed   c.existing step too long
+2. recover mcp quickly
+3. command wrong → [fixed] pre-flight dry-run in Phase 3 catches this before start-run.js
+4. use playwright-cdp [fixed]
+5. can take screenshot for checking [fixed]
+6. no query of testid [fixed]
+7. doctor fail but no force stop [fixed]
+8. confirm the attach_command by user [fixed]
+9. rspo timeout fix
+10. flexible profile
