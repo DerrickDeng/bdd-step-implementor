@@ -173,6 +173,31 @@ function writeLaunchFailureDiagnostic(targetPath, value) {
   });
 }
 
+async function resolveWsUrl(httpBase, opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? 30000;
+  const pollIntervalMs = opts.pollIntervalMs ?? 250;
+  const deadline = Date.now() + timeoutMs;
+  const url = `${httpBase.replace(/\/+$/, '')}/json/version`;
+  let lastErr;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const body = await res.json();
+        if (typeof body.webSocketDebuggerUrl === 'string') {
+          return body.webSocketDebuggerUrl;
+        }
+        throw new Error('webSocketDebuggerUrl missing in /json/version response');
+      }
+      lastErr = new Error(`/json/version returned ${res.status}`);
+    } catch (err) {
+      lastErr = err;
+    }
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
+  }
+  throw new Error(`Timed out resolving ws URL from ${url}: ${lastErr?.message || 'unknown error'}`);
+}
+
 async function terminatePids(pids) {
   for (const pid of pids) {
     await terminatePidTree(pid, ROOT);
@@ -372,10 +397,28 @@ async function main() {
   atomicWriteJsonSync(path.join(bridgeDir, 'launch.json'), manifest);
   atomicWriteJsonSync(path.join(bridgeRootAbs, 'latest-run.json'), manifest);
 
+  try {
+    const wsUrl = await resolveWsUrl(`http://127.0.0.1:${options.port}`, { timeoutMs: 30000 });
+    fs.writeFileSync(path.join(bridgeDir, 'cdp-ws.txt'), wsUrl + '\n');
+    console.log(`[start-run] cdp ws url -> ${path.join(bridgeDir, 'cdp-ws.txt')}`);
+  } catch (err) {
+    console.error(`[start-run] failed to resolve CDP ws url: ${err.message}`);
+    try { process.kill(child.pid, 'SIGTERM'); } catch (_) {}
+    fs.writeFileSync(
+      path.join(bridgeDir, 'launch-failure.json'),
+      JSON.stringify({ kind: 'ws-url-resolution', error: err.message }, null, 2),
+    );
+    process.exit(1);
+  }
+
   process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
 }
 
-main().catch(error => {
-  console.error(error.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(error => {
+    console.error(error.message);
+    process.exit(1);
+  });
+}
+
+module.exports = { ...module.exports, resolveWsUrl };
