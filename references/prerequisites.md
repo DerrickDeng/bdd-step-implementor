@@ -1,6 +1,6 @@
 # Configuration Checklist Guide
 
-Complete setup and verification guide for the MCP Step Implementor skill.
+Complete setup and verification guide for the BDD Step Implementor skill.
 
 ## Table of Contents
 
@@ -9,7 +9,7 @@ Complete setup and verification guide for the MCP Step Implementor skill.
 **Machine Checks (doctor.js verifies these):**
 1. [Node.js & npm Toolchain](#-1-nodejs--npm-toolchain)
 2. [Project Dependencies](#-2-project-dependencies)
-3. [MCP Configuration (.mcp.json)](#-3-mcp-configuration-mcpjson)
+3. [playwright-cli Installation](#-3-playwright-cli-installation)
 4. [Cucumber Hooks Configuration](#-4-cucumber-hooks-configuration)
 5. [Platform Tooling](#-5-platform-tooling)
 6. [Project Profile Configuration](#-6-project-profile-configuration)
@@ -26,7 +26,7 @@ Complete setup and verification guide for the MCP Step Implementor skill.
 
 ```bash
 # 1. Resolve skill path
-SKILL_DIR=$(node ~/.claude/skills/mcp-step-implementor/scripts/resolve-skill-path.js 2>/dev/null || node .claude/skills/mcp-step-implementor/scripts/resolve-skill-path.js)
+SKILL_DIR=$(node ~/.claude/skills/bdd-step-implementor/scripts/resolve-skill-path.js 2>/dev/null || node .claude/skills/bdd-step-implementor/scripts/resolve-skill-path.js)
 
 # 2. Discover project structure AND run configuration checks automatically
 node "$SKILL_DIR/scripts/discover-project.js" --run-doctor
@@ -97,7 +97,6 @@ npx --version
 - ✓ package.json exists at project root
 - ✓ @playwright/test >= 1.57.0 installed
 - ✓ @cucumber/cucumber installed
-- ✓ Playwright CLI exposes run-mcp-server command
 
 **Verification:**
 ```bash
@@ -107,10 +106,6 @@ ls package.json
 # Check dependencies installed
 ls node_modules/@playwright/test/package.json
 ls node_modules/@cucumber/cucumber/package.json
-
-# Verify Playwright MCP server support
-npx playwright run-mcp-server --help
-# Should output: "Interact with the browser over MCP"
 
 # Check Playwright version
 npx playwright --version  # Should be >= 1.57.0
@@ -124,188 +119,40 @@ npm install
 
 **Why it matters:**
 - package.json: Ensures valid Node.js project root
-- @playwright/test >= 1.57.0: Provides MCP capabilities (run-mcp-server command)
+- @playwright/test >= 1.57.0: Required by Playwright CLI and for browser automation
 - @cucumber/cucumber: Provides Given/When/Then step registration and test runner
 
 **Common issues:**
 - ❌ @playwright/test missing → TypeScript compilation fails → tests fail immediately
-- ❌ @playwright/test < 1.57.0 → run-mcp-server unavailable → cannot attach MCP
+- ❌ @playwright/test < 1.57.0 → Missing Playwright features → Cannot run automation
 
 **Related doctor.js checks:**
 - `package-json`, `deps-playwright-test`, `deps-cucumber`, `playwright-cli`
 
 ---
 
-### ✅ 3. MCP Configuration (.mcp.json)
+### ✅ 3. playwright-cli Installation
 
 **Required:**
-- ✓ .mcp.json exists at project root
-- ✓ Contains Playwright CDP attach server configuration
-- ✓ Server uses run-mcp-server with --cdp-endpoint flag
-- ✓ Server includes --caps=testing capability
-- ✓ CDP endpoint port matches project-profile.json → cdp_port (default: 9222)
-- ✓ Includes proxy bypass env vars (no_proxy, NO_PROXY)
+- ✓ `playwright-cli` available on PATH
+- ✓ Version >= 0.1.8
 
-**Required format (macOS/Linux):**
-```json
-{
-  "mcpServers": {
-    "playwright-cdp": {
-      "command": "npx",
-      "args": [
-        "playwright",
-        "run-mcp-server",
-        "--caps=testing",
-        "--cdp-endpoint",
-        "http://127.0.0.1:9222"
-      ],
-      "env": {
-        "no_proxy": "127.0.0.1,localhost",
-        "NO_PROXY": "127.0.0.1,localhost"
-      }
-    }
-  }
-}
-```
-
-**Required format (Windows):**
-```json
-{
-  "mcpServers": {
-    "playwright-cdp": {
-      "command": "cmd",
-      "args": [
-        "/c",
-        "npx",
-        "playwright",
-        "run-mcp-server",
-        "--caps=testing",
-        "--cdp-endpoint",
-        "http://127.0.0.1:9222"
-      ],
-      "env": {
-        "no_proxy": "127.0.0.1,localhost",
-        "NO_PROXY": "127.0.0.1,localhost"
-      }
-    }
-  }
-}
-```
-
-**Verification (machine - doctor.js checks):**
+**Verification:**
 ```bash
-# File exists and is valid JSON
-node -e "JSON.parse(require('fs').readFileSync('.mcp.json', 'utf8'))"
-
-# Contains CDP attach server (simplified check)
-# - command is 'npx' (Unix) or 'cmd' (Windows)
-# - args includes 'run-mcp-server' and '--cdp-endpoint'
-# - args includes '--caps=testing' or '--caps' with value containing 'testing'
+playwright-cli --version  # Expected: 0.1.8 or higher
 ```
 
-**Verification (LLM - semantic checks):**
-
-1. **Read .mcp.json and project-profile.json:**
+**Install / upgrade:**
 ```bash
-cat .mcp.json
-cat .claude/project-profile.json
-```
-
-2. **Check CDP endpoint port consistency:**
-   - Extract port from .mcp.json → mcpServers['playwright-cdp'].args (the URL after --cdp-endpoint)
-   - Extract port from project-profile.json → cdp_port
-   - They must match. If different, update one to match the other.
-
-**Example check:**
-```javascript
-// .mcp.json shows: "http://127.0.0.1:9223"
-// project-profile.json shows: "cdp_port": 9222
-// ❌ Mismatch! MCP will try to connect to 9223, but Cucumber exposes 9222
-```
-
-3. **Verify --caps=testing is present:**
-   - Check args array contains "--caps=testing" exactly
-   - Or contains "--caps" followed by a value matching `/(^|,)testing(,|$)/`
-   - NOT: "--caps" with value "test" (wrong) or missing entirely
-
-4. **Verify proxy bypass env vars:**
-   - Check env.no_proxy and env.NO_PROXY both exist
-   - Should include at minimum: "127.0.0.1,localhost"
-   - If corporate network, may need additional exclusions
-
-5. **Check platform-specific format:**
-   - Windows: command: "cmd", args start with "/c", "npx"
-   - Unix/macOS: command: "npx", args start with "playwright"
-
-**Edge cases:**
-
-- **Custom CDP port:** If project uses non-9222 port, verify three-way consistency:
-
-  a. **Read .mcp.json CDP endpoint:**
-  ```bash
-  cat .mcp.json | grep -A 5 "cdp-endpoint"
-  # Extract port from URL, e.g., "http://127.0.0.1:9223" → port is 9223
-  ```
-
-  b. **Read project-profile.json cdp_port:**
-  ```bash
-  cat .claude/project-profile.json | grep cdp_port
-  # Should show: "cdp_port": 9223
-  ```
-
-  c. **Read hooks.ts PW_MCP_CDP_PORT usage:**
-  ```bash
-  cat {hooks_path} | grep -A 2 -B 2 "PW_MCP_CDP_PORT"
-  ```
-
-  Look for patterns like:
-  ```typescript
-  // ✅ Good - uses env var without hardcoded fallback
-  const port = process.env.PW_MCP_CDP_PORT;
-
-  // ✅ Good - fallback matches config (if all configs use 9223)
-  const port = process.env.PW_MCP_CDP_PORT || '9223';
-
-  // ❌ Bad - hardcoded fallback doesn't match .mcp.json (9222 vs 9223)
-  const port = process.env.PW_MCP_CDP_PORT || '9222';
-  //                                              ^^^^
-  //                                         This should be 9223
-  ```
-
-  If a hardcoded fallback exists, verify it matches the port in .mcp.json and project-profile.json.
-
-  If no fallback exists (just `process.env.PW_MCP_CDP_PORT` without `||`), that's acceptable - start-run.js always sets the env var explicitly. However, adding a fallback matching the configured port makes the setup more robust.
-
-  **Why this matters:** If start-run.js fails to set the env var, hooks falls back to the hardcoded value. If this fallback differs from .mcp.json, MCP connects to the wrong port.
-
-- **Existing .mcp.json with other servers:** Don't overwrite existing servers. setup.js merges playwright-cdp into existing config.
-
-- **Invalid JSON:** If .mcp.json is malformed, doctor.js reports manual-required. setup.js cannot auto-fix. User must repair JSON syntax first.
-
-- **Server name:** By convention, the CDP attach server is named `playwright-cdp`. Other names work but may confuse users looking at SKILL.md examples
-
-**Auto-fix:**
-```bash
-# setup.js creates/patches .mcp.json with correct format
-node "$SKILL_DIR/scripts/setup.js"
+npm install -g @playwright/cli@latest
 ```
 
 **Why it matters:**
-- .mcp.json: Claude Code reads this to discover available MCP servers
-- --cdp-endpoint: Tells MCP to attach to existing browser (not launch new one)
-- --caps=testing: Enables browser control tools (snapshot, evaluate, etc.)
-- Port consistency: Mismatch causes MCP connection failures
-- Proxy bypass: Corporate networks may route localhost through proxies
-
-**Common issues:**
-- ❌ No .mcp.json → MCP tools unavailable
-- ❌ Missing --cdp-endpoint → MCP starts new browser instead of attaching
-- ❌ Missing --caps=testing → browser_snapshot fails with "capability not supported"
-- ❌ Port mismatch → "connection refused" errors
-- ❌ No proxy bypass → "connection timeout" in corporate networks
+- The skill's Phase 3 observation uses `playwright-cli attach --cdp=ws://...` to connect to the Cucumber-launched browser. Without the CLI (or with a pre-0.1.8 version that lacks a standalone `attach` command), Phase 3 cannot run.
+- CLI 0.1.8 exposes `attach`, `snapshot`, `eval`, `tab-list`, `screenshot` — the exact observation surface the skill needs.
 
 **Related doctor.js checks:**
-- `mcp-config`
+- `playwright-cli`
 
 ---
 
@@ -473,7 +320,7 @@ Read project-profile.json → page_access.pattern and verify hooks code matches:
 
 - **Hooks in custom path:** Some projects use non-standard layouts (e.g., `tests/support/setup.ts`). discover-project.js should detect this and save to profile.files.hooks. If doctor.js fails to find hooks, check if the file exists but in a non-standard location, then update the profile manually or re-run discovery.
 
-- **CDP port with no fallback:** If hooks only has `const port = process.env.PW_MCP_CDP_PORT;` without `|| '9222'`, that's acceptable as long as start-run.js always sets the env var. However, adding a fallback matching the configured port (from .mcp.json and project-profile.json) makes the setup more robust in case the env var isn't set.
+- **CDP port with no fallback:** If hooks only has `const port = process.env.PW_MCP_CDP_PORT;` without `|| '9222'`, that's acceptable as long as start-run.js always sets the env var. However, adding a fallback matching the configured port (from project-profile.json) makes the setup more robust in case the env var isn't set.
 
 - **Multiple browsers:** Some projects launch multiple browsers (Firefox + Chromium, or multiple Chromium instances). Ensure:
   - At least one Chromium instance has the CDP port
@@ -602,9 +449,8 @@ Without these tools, --clean-port flag cannot work, causing "address already in 
 - `files.world` (where World class lives)
 - `world.import_from_stub` (relative path from stub to World)
 
-**2. CDP Port Three-Way Consistency:**
+**2. CDP Port Two-Way Consistency:**
 - `project-profile.json` → cdp_port
-- `.mcp.json` → CDP endpoint URL port
 - `hooks.ts` → PW_MCP_CDP_PORT fallback (if exists)
 
 **3. Page Access Pattern Consistency:**
@@ -678,29 +524,20 @@ node "$SKILL_DIR/scripts/discover-project.js" --force
 
 ---
 
-### Check 2: MCP Config Semantic Verification
+### Check 2: playwright-cli Install Verification
 
-**Goal:** Verify .mcp.json CDP server configuration
+**Goal:** Verify `playwright-cli` is installed at a compatible version.
 
 **Steps:**
-1. Read both config files:
-   ```bash
-   cat .mcp.json
-   cat .claude/project-profile.json
-   ```
-
-2. ✅ Extract CDP endpoint port, verify matches profile cdp_port
-3. ✅ Verify --caps=testing present
-4. ✅ Verify proxy bypass vars (no_proxy, NO_PROXY) present
-5. ✅ Verify platform-specific format (cmd/npx command)
+1. Run `playwright-cli --version`.
+2. ✅ Verify version is >= 0.1.8.
+3. ✅ If < 0.1.8, run `npm install -g @playwright/cli@latest` (or `sudo npm install -g @playwright/cli@latest` on systems with restricted `/usr/local`).
 
 **Report format:**
 ```
-✅ MCP Config Semantic Check: PASS
-   - CDP endpoint port matches profile: ✅ (both 9222)
-   - --caps=testing present: ✅
-   - Proxy bypass vars present: ✅
-   - Platform format correct: ✅ (Windows cmd format)
+✅ playwright-cli Verification: PASS
+   - Installed: ✅ (version 0.1.8)
+   - Version >= 0.1.8: ✅
 ```
 
 ---
@@ -713,7 +550,7 @@ node "$SKILL_DIR/scripts/discover-project.js" --force
 1. ✅ Verify hooks path exists and is readable
 2. ✅ Verify world path exists and exports World class
 3. ✅ Verify page_access.pattern matches hooks implementation
-4. ✅ Verify cdp_port three-way consistency
+4. ✅ Verify cdp_port two-way consistency
 
 **Report format:**
 ```
@@ -721,7 +558,7 @@ node "$SKILL_DIR/scripts/discover-project.js" --force
    - Hooks path valid: ✅ (src/step-definitions/hooks/hooks.ts)
    - World path valid: ✅ (src/setup/world.ts)
    - Page access pattern matches: ✅ (static_singleton)
-   - CDP port three-way match: ✅ (all 9222)
+   - CDP port two-way match: ✅ (all 9222)
 ```
 
 ---
@@ -731,15 +568,13 @@ node "$SKILL_DIR/scripts/discover-project.js" --force
 **Goal:** Detect environment-specific issues
 
 **Checks:**
-1. ✅ Corporate proxy: Verify no_proxy includes 127.0.0.1,localhost
-2. ✅ Custom CDP port: Verify all three locations use same port
-3. ✅ Multiple browsers: Verify Chromium has CDP, AfterAll closes correct browser
-4. ✅ CI conditionals: Verify process.env.CI doesn't disable CDP
+1. ✅ Custom CDP port: Verify all two locations use same port
+2. ✅ Multiple browsers: Verify Chromium has CDP, AfterAll closes correct browser
+3. ✅ CI conditionals: Verify process.env.CI doesn't disable CDP
 
 **Report format:**
 ```
 ✅ Edge Case Scan: PASS
-   - Corporate proxy: N/A (no proxy detected)
    - Custom CDP port: N/A (using default 9222)
    - Multiple browsers: N/A (single Chromium)
    - CI conditionals: ✅ (only affects headless, not CDP)
@@ -827,14 +662,10 @@ node "$SKILL_DIR/scripts/setup.js"  # If issues found
 node "$SKILL_DIR/scripts/start-run.js" --clean-port
 ```
 
-**"MCP connection refused"**
-- Check CDP port consistency (.mcp.json, project-profile.json, hooks.ts)
+**"playwright-cli connection refused"**
+- Check CDP port consistency (project-profile.json, hooks.ts)
 - Verify browser launched with --remote-debugging-port
-- Check no_proxy environment variables
-
-**"browser_snapshot: capability not supported"**
-- Verify .mcp.json includes --caps=testing
-- Check Playwright version >= 1.57.0
+- Verify playwright-cli is installed and version >= 0.1.8
 
 **"page is not defined" errors**
 - Verify page_access.pattern matches hooks implementation
@@ -847,7 +678,6 @@ node "$SKILL_DIR/scripts/start-run.js" --clean-port
 **After setup, verify these files exist:**
 ```bash
 ls .claude/project-profile.json  # ✅ Should exist
-ls .mcp.json                      # ✅ Should exist
 ```
 
 **Run doctor and verify READY status:**

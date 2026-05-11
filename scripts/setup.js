@@ -4,7 +4,6 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  DEFAULT_ATTACH_SERVER,
   ROOT,
   inspectPrereqs,
   printReport,
@@ -43,37 +42,6 @@ function ensureGitignoreEntries(dryRun) {
   return true;
 }
 
-function ensureMcpConfig(dryRun) {
-  const current = readJsonIfExists('.mcp.json');
-  if (current.error) {
-    throw new Error(`Cannot auto-fix invalid .mcp.json: ${current.error.message}`);
-  }
-
-  const config = current.value || { mcpServers: {} };
-  config.mcpServers = config.mcpServers || {};
-  const currentAttach = JSON.stringify(config.mcpServers['playwright-cdp'] || null);
-  const desiredAttach = JSON.stringify(DEFAULT_ATTACH_SERVER);
-  const needsAttach = currentAttach !== desiredAttach;
-  const needsTestServer = !config.mcpServers['playwright-test'];
-
-  if (!needsAttach && !needsTestServer) return false;
-
-  applyAction('Create or patch .mcp.json for Playwright MCP attach mode', dryRun, () => {
-    config.mcpServers['playwright-cdp'] = DEFAULT_ATTACH_SERVER;
-    if (!config.mcpServers['playwright-test']) {
-      const isWindows = process.platform === 'win32';
-      config.mcpServers['playwright-test'] = {
-        command: isWindows ? 'cmd' : 'npx',
-        args: isWindows
-          ? ['/c', 'npx', 'playwright', 'run-test-mcp-server']
-          : ['playwright', 'run-test-mcp-server'],
-      };
-    }
-    fs.writeFileSync(path.join(ROOT, '.mcp.json'), `${JSON.stringify(config, null, 2)}\n`);
-  });
-  return true;
-}
-
 function ensureDependencies(dryRun) {
   const installCommand = fs.existsSync(path.join(ROOT, 'package-lock.json'))
     ? ['npm', ['ci']]
@@ -96,7 +64,6 @@ function needsDependencyInstall(report) {
   return [
     'deps-playwright-test',
     'deps-cucumber',
-    'playwright-cli',
   ].some(id => ids.has(id));
 }
 
@@ -119,7 +86,6 @@ function main() {
   let changed = false;
 
   if (ensureGitignoreEntries(options.dryRun)) changed = true;
-  if (ensureMcpConfig(options.dryRun)) changed = true;
 
   if (needsDependencyInstall(initialReport)) {
     ensureDependencies(options.dryRun);

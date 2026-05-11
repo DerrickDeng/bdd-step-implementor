@@ -162,6 +162,34 @@ function shellEscape(arg) {
   return "'" + arg.replace(/'/g, "'\\''") + "'";
 }
 
+function isWrappedInLiteralQuotes(value) {
+  return (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  );
+}
+
+function validateCommandArgs(command) {
+  for (let i = 0; i < command.length; i += 1) {
+    const arg = command[i];
+    let tagValue = null;
+
+    if (arg === '--tags') {
+      tagValue = command[i + 1] || '';
+    } else if (arg.startsWith('--tags=')) {
+      tagValue = arg.slice('--tags='.length);
+    }
+
+    if (tagValue && isWrappedInLiteralQuotes(tagValue)) {
+      throw new Error(
+        `Invalid --tags value contains literal quote characters: ${tagValue}\n` +
+        'Use shell quotes only, for example: --tags "@verify_x and @bdd". ' +
+        'Do not pass nested literal quotes like: --tags \'"@verify_x and @bdd"\'.'
+      );
+    }
+  }
+}
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -171,6 +199,31 @@ function writeLaunchFailureDiagnostic(targetPath, value) {
     ...value,
     recordedAt: new Date().toISOString(),
   });
+}
+
+async function resolveWsUrl(httpBase, opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? 30000;
+  const pollIntervalMs = opts.pollIntervalMs ?? 250;
+  const deadline = Date.now() + timeoutMs;
+  const url = `${httpBase.replace(/\/+$/, '')}/json/version`;
+  let lastErr;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const body = await res.json();
+        if (typeof body.webSocketDebuggerUrl === 'string') {
+          return body.webSocketDebuggerUrl;
+        }
+        throw new Error('webSocketDebuggerUrl missing in /json/version response');
+      }
+      lastErr = new Error(`/json/version returned ${res.status}`);
+    } catch (err) {
+      lastErr = err;
+    }
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
+  }
+  throw new Error(`Timed out resolving ws URL from ${url}: ${lastErr?.message || 'unknown error'}`);
 }
 
 async function terminatePids(pids) {
@@ -187,6 +240,7 @@ async function terminatePids(pids) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  validateCommandArgs(options.command);
   if (!options.timeoutExplicit) {
     options.timeoutMs = computeRunTimeoutMs(options.stepCount);
   }
@@ -372,10 +426,28 @@ async function main() {
   atomicWriteJsonSync(path.join(bridgeDir, 'launch.json'), manifest);
   atomicWriteJsonSync(path.join(bridgeRootAbs, 'latest-run.json'), manifest);
 
+  try {
+    const wsUrl = await resolveWsUrl(`http://127.0.0.1:${options.port}`, { timeoutMs: 30000 });
+    fs.writeFileSync(path.join(bridgeDir, 'cdp-ws.txt'), wsUrl + '\n');
+    console.log(`[start-run] cdp ws url -> ${path.join(bridgeDir, 'cdp-ws.txt')}`);
+  } catch (err) {
+    console.error(`[start-run] failed to resolve CDP ws url: ${err.message}`);
+    try { process.kill(child.pid, 'SIGTERM'); } catch (_) {}
+    fs.writeFileSync(
+      path.join(bridgeDir, 'launch-failure.json'),
+      JSON.stringify({ kind: 'ws-url-resolution', error: err.message }, null, 2),
+    );
+    process.exit(1);
+  }
+
   process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
 }
 
-main().catch(error => {
-  console.error(error.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(error => {
+    console.error(error.message);
+    process.exit(1);
+  });
+}
+
+module.exports = { ...module.exports, resolveWsUrl, validateCommandArgs };

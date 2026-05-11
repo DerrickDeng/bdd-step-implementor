@@ -6,6 +6,7 @@ const path = require('path');
 const { getPortOwners, terminatePidTree } = require('./platform-runner');
 const { atomicWriteJsonSync } = require('./fs-utils');
 const { resolveRunContext } = require('./run-manifest');
+const { cliSessionNameForRun, legacyCliSessionNamesForRun } = require('./cli-session');
 
 const ROOT = process.cwd();
 
@@ -68,6 +69,23 @@ function readManifest(options) {
   };
 }
 
+function closeCliDaemon(runId) {
+  const sessionNames = [cliSessionNameForRun(runId), ...legacyCliSessionNamesForRun(runId)];
+  for (const sessionName of sessionNames) {
+    const result = require('child_process').spawnSync(
+      'playwright-cli',
+      ['-s', sessionName, 'close'],
+      { encoding: 'utf8' },
+    );
+    if (result.status !== 0) {
+      // Session may not exist (run never attached) — swallow silently
+      if (!/is not open/i.test(`${result.stdout}\n${result.stderr}`)) {
+        console.warn(`[stop-run] playwright-cli close ${sessionName} returned ${result.status}: ${result.stderr?.trim()}`);
+      }
+    }
+  }
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const { bridgeRootAbs, manifest, manifestPath, latestPath, launchPath } = readManifest(options);
@@ -81,6 +99,11 @@ async function main() {
 
   if (manifest?.pid) {
     result.processTermination = await terminatePidTree(manifest.pid, ROOT);
+  }
+
+  const runId = manifest?.runId ?? options.runId;
+  if (runId) {
+    closeCliDaemon(runId);
   }
 
   if (options.cleanPort) {
