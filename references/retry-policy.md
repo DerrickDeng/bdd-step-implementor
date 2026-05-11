@@ -26,7 +26,7 @@ Retry up to 6 times per step.
 | Case error | MCP confirms expected content is absent | Stop and report immediately — do not burn retries |
 | Dirty page state | Failed `impl.js` mutated the page | Restart the background run via the run restart protocol, then return to step A |
 
-The accessibility snapshot is the primary diagnosis tool. A screenshot adds visual context that the snapshot cannot express, and at the right moment it can cut a debug cycle short. Use `mcp__playwright-cdp__browser_take_screenshot` when:
+The accessibility snapshot is the primary diagnosis tool. A screenshot adds visual context that the snapshot cannot express, and at the right moment it can cut a debug cycle short. Use `$CLI screenshot` when:
 
 - The element appears in the snapshot but the locator still fails after 2+ retries — the page may have an overlay, a sticky header, or the element may be clipped off-screen
 - A step times out — screenshot shows what the page looked like at the deadline (loading spinner? modal? blank area?)

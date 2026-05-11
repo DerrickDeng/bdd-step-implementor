@@ -834,7 +834,7 @@ function main() {
         console.log('\nYou MUST complete PHASE 2: LLM Verification Checklist (5 checks)');
         console.log('\nThis validates semantic correctness that machines cannot check:');
         console.log('  ✓ Check 1: Hooks semantic (BeforeAll/AfterAll, CDP port)');
-        console.log('  ✓ Check 2: MCP config semantic (--caps=testing, proxy bypass)');
+        console.log('  ✓ Check 2: playwright-cli install + version');
         console.log('  ✓ Check 3: Project profile consistency');
         console.log('  ✓ Check 4: Edge case scan (CI conditionals, multiple browsers)');
         console.log('  ✓ Check 5: Command template validation (placeholders)');

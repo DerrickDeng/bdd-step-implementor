@@ -9,21 +9,32 @@ const { readProjectProfile } = require('./fs-utils');
 const ROOT = process.cwd();
 const MIN_NODE_MAJOR = 18;
 
-function getDefaultAttachServer() {
-  const isWindows = process.platform === 'win32';
-  return {
-    command: isWindows ? 'cmd' : 'npx',
-    args: isWindows
-      ? ['/c', 'npx', 'playwright', 'run-mcp-server', '--caps=testing', '--cdp-endpoint', 'http://127.0.0.1:9222']
-      : ['playwright', 'run-mcp-server', '--caps=testing', '--cdp-endpoint', 'http://127.0.0.1:9222'],
-    env: {
-      no_proxy: '127.0.0.1,localhost',
-      NO_PROXY: '127.0.0.1,localhost',
-    },
-  };
+function checkPlaywrightCliInstalled(opts = {}) {
+  const MIN = [0, 1, 8];
+  let version = opts.simulate;
+  if (version === undefined) {
+    try {
+      const out = require('child_process').spawnSync('playwright-cli', ['--version'], { encoding: 'utf8' });
+      if (out.status === 0) {
+        const m = (out.stdout || '').trim().match(/^(\d+\.\d+\.\d+)/);
+        version = m ? m[1] : null;
+      } else {
+        version = null;
+      }
+    } catch (_) {
+      version = null;
+    }
+  }
+  if (!version) {
+    return { ok: false, reason: 'playwright-cli is not installed. Install with: npm install -g @playwright/cli@latest' };
+  }
+  const parts = version.split(/[.\-]/).map((n) => parseInt(n, 10));
+  const cmp = [0, 1, 2].reduce((acc, i) => acc || ((parts[i] || 0) - MIN[i]), 0);
+  if (cmp < 0) {
+    return { ok: false, version, reason: `playwright-cli ${version} is older than required >= 0.1.8. Upgrade with: npm install -g @playwright/cli@latest` };
+  }
+  return { ok: true, version };
 }
-
-const DEFAULT_ATTACH_SERVER = getDefaultAttachServer();
 
 function run(command, args, options = {}) {
   return childProcess.spawnSync(command, args, {
@@ -61,71 +72,6 @@ function localPackageInstalled(packageName) {
 
 function addCheck(checks, id, label, ok, category, detail, fixCommand) {
   checks.push({ id, label, ok, category, detail, fixCommand });
-}
-
-function inspectMcpConfig() {
-  const result = readJsonIfExists('.mcp.json');
-  if (!result.exists) {
-    return {
-      ok: false,
-      category: 'auto-fixable',
-      detail: 'Missing .mcp.json at the repo root.',
-    };
-  }
-
-  if (result.error) {
-    return {
-      ok: false,
-      category: 'manual-required',
-      detail: `.mcp.json is not valid JSON: ${result.error.message}`,
-    };
-  }
-
-  const servers = Object.values(result.value.mcpServers || {});
-  const attachServers = servers.filter(server => {
-    const args = Array.isArray(server.args) ? server.args : [];
-
-    // macOS/Linux format: command: 'npx', args: ['playwright', 'run-mcp-server', ...]
-    const isMacLinuxFormat = server.command === 'npx' &&
-      args[0] === 'playwright' &&
-      args[1] === 'run-mcp-server' &&
-      args.includes('--cdp-endpoint');
-
-    // Windows format: command: 'cmd', args: ['/c', 'npx', 'playwright', 'run-mcp-server', ...]
-    const isWindowsFormat = server.command === 'cmd' &&
-      args[0] === '/c' &&
-      args[1] === 'npx' &&
-      args[2] === 'playwright' &&
-      args[3] === 'run-mcp-server' &&
-      args.includes('--cdp-endpoint');
-
-    return isMacLinuxFormat || isWindowsFormat;
-  });
-
-  if (attachServers.length === 0) {
-    return {
-      ok: false,
-      category: 'auto-fixable',
-      detail: '.mcp.json does not include a Playwright CDP attach server.',
-    };
-  }
-
-  const hasTestingCap = attachServers.some(server => {
-    const args = Array.isArray(server.args) ? server.args : [];
-    // The --caps=testing flag works the same way in both macOS/Linux and Windows formats
-    return args.includes('--caps=testing') ||
-      (args.includes('--caps') && args.some(value => /(^|,)testing(,|$)/.test(value)));
-  });
-
-  if (!hasTestingCap) {
-    return {
-      ok: false,
-      category: 'auto-fixable',
-      detail: 'The Playwright CDP attach server is missing the testing capability.',
-    };
-  }
-
-  return { ok: true, category: 'none', detail: '' };
 }
 
 function inspectPrereqs() {
@@ -202,16 +148,15 @@ function inspectPrereqs() {
     'node .claude/skills/mcp-step-implementor/scripts/setup.js'
   );
 
-  const playwrightCli = run('npx', ['playwright', 'run-mcp-server', '--help']);
-  const playwrightCliOutput = `${playwrightCli.stdout || ''}\n${playwrightCli.stderr || ''}`;
+  const cliCheck = checkPlaywrightCliInstalled();
   addCheck(
     checks,
     'playwright-cli',
-    'local Playwright CLI exposes run-mcp-server',
-    !playwrightCli.error && playwrightCli.status === 0 && playwrightCliOutput.includes('Interact with the browser over MCP'),
-    'auto-fixable',
-    'Local Playwright CLI is unavailable or does not expose run-mcp-server.',
-    'node .claude/skills/mcp-step-implementor/scripts/setup.js'
+    'playwright-cli >= 0.1.8 installed',
+    cliCheck.ok,
+    'manual-required',
+    cliCheck.ok ? null : cliCheck.reason,
+    'npm install -g @playwright/cli@latest',
   );
 
   // Read hooks path from profile if available, then fall back to search
@@ -284,19 +229,6 @@ function inspectPrereqs() {
     'node .claude/skills/mcp-step-implementor/scripts/setup.js'
   );
 
-  const mcpStatus = inspectMcpConfig();
-  addCheck(
-    checks,
-    'mcp-config',
-    '.mcp.json provides a Playwright CDP attach server',
-    mcpStatus.ok,
-    mcpStatus.category,
-    mcpStatus.detail,
-    mcpStatus.category === 'auto-fixable'
-      ? 'node .claude/skills/mcp-step-implementor/scripts/setup.js'
-      : null
-  );
-
   const platformCommandsOk = process.platform === 'win32'
     ? commandExists('netstat', ['-ano']) && commandExists('taskkill', ['/?'])
     : commandExists('lsof', ['-v']);
@@ -352,7 +284,6 @@ function printReport(report) {
 }
 
 module.exports = {
-  DEFAULT_ATTACH_SERVER,
   ROOT,
   inspectPrereqs,
   printReport,
@@ -360,3 +291,4 @@ module.exports = {
   readJsonIfExists,
   run,
 };
+module.exports.checkPlaywrightCliInstalled = checkPlaywrightCliInstalled;

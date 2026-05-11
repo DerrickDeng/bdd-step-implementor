@@ -4,7 +4,7 @@
 /**
  * resolve-skill-path.js
  *
- * Resolves the absolute path to the mcp-step-implementor skill directory,
+ * Resolves the absolute path to the bdd-step-implementor skill directory,
  * regardless of where it's installed.
  *
  * Usage:
@@ -13,9 +13,9 @@
  *
  * The script searches in this order:
  * 1. Same directory as this script (fastest - script is inside the skill)
- * 2. Project-local: .claude/skills/mcp-step-implementor/
- * 3. Global user: ~/.claude/skills/mcp-step-implementor/
- * 4. Global system (Windows): %ProgramData%/Claude/skills/mcp-step-implementor/
+ * 2. Project-local: .claude/skills/bdd-step-implementor/
+ * 3. Global user: ~/.claude/skills/bdd-step-implementor/
+ * 4. Global system (Windows): %ProgramData%/Claude/skills/bdd-step-implementor/
  * 5. Plugin directories (various possible locations)
  */
 
@@ -24,7 +24,7 @@ const path = require('path');
 const os = require('os');
 
 function findSkillDir() {
-  const skillName = 'mcp-step-implementor';
+  const skillName = 'bdd-step-implementor';
   const searchPaths = [];
 
   // 1. Development mode / Direct invocation (script is already inside the skill)
@@ -79,7 +79,7 @@ function findSkillDir() {
   }
 
   // Not found - report all searched locations
-  console.error('Error: mcp-step-implementor skill not found');
+  console.error('Error: bdd-step-implementor skill not found');
   console.error('Searched locations:');
   for (const [label, loc] of searchPaths) {
     console.error(`  - ${label}: ${loc}`);

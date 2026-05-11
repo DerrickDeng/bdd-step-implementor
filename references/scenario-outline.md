@@ -68,4 +68,4 @@ Cucumber error output includes the failing row's line number and parameter value
 
 ## Snapshot Reuse
 
-Snapshot reuse rules for Scenario Outline are the same as for plain `Scenario` (see `mcp-snapshot-rules.md`). Additional constraint: different parameter values represent different page states. A snapshot captured for one Examples row cannot be assumed valid for a different row.
+Snapshot reuse rules for Scenario Outline are the same as for plain `Scenario` (see `cli-snapshot-rules.md`). Additional constraint: different parameter values represent different page states. A snapshot captured for one Examples row cannot be assumed valid for a different row.

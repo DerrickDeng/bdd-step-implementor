@@ -1,13 +1,13 @@
 ---
-name: mcp-step-implementor
-description: Implement Cucumber BDD steps by attaching Playwright MCP to the live Chromium browser launched by Cucumber — observing the real page at each paused step to write accurate locators and assertions. Use this skill whenever the user wants to implement Cucumber steps, add step definitions, create page object methods for BDD scenarios, or says things like "implement the steps", "make this feature file work", "write the step definitions", "implement this scenario". This skill uses real-time browser observation (MCP attach to the Cucumber browser) for higher-quality locator analysis than static HTML snapshots.
+name: bdd-step-implementor
+description: Implement Cucumber BDD steps by attaching playwright-cli to the live Chromium browser launched by Cucumber — observing the real page at each paused step to write accurate locators and assertions. Use this skill whenever the user wants to implement Cucumber steps, add step definitions, create page object methods for BDD scenarios, or says things like "implement the steps", "make this feature file work", "write the step definitions", "implement this scenario". This skill uses real-time browser observation (playwright-cli attach via CDP) for higher-quality locator analysis than static HTML snapshots, and avoids token overhead of the MCP server by writing snapshots to files and letting the agent read them on demand.
 ---
 
-# MCP Step Implementor
+# BDD Step Implementor
 
-This skill defines the attach workflow for implementing Cucumber BDD steps with Playwright MCP on the live browser launched by Cucumber.
+This skill defines the attach workflow for implementing Cucumber BDD steps with playwright-cli on the live browser launched by Cucumber.
 
-It is only valid when MCP is attached to the same Chromium process that Cucumber launched. If the MCP browser is a different process, the analysis is invalid and this skill must not be used.
+It is only valid when playwright-cli is attached to the same Chromium process that Cucumber launched. If the CLI is connected to a different browser process, the analysis is invalid and this skill must not be used.
 
 Reference files mentioned below are relative to this skill directory. Script commands are shown as repo-root-relative paths.
 
@@ -363,7 +363,7 @@ Checks (all must pass before proceeding):
 4. **Correct environment message** — for projects with tag-based config (e.g., "Using TW digi url in UAT"), verify the expected message appears. If you see "Url in UAT is invalid" or similar, the scenario tags are missing from tag_filter.
 
 Common fixes:
-- **0 scenarios / tag filter**: check quoting — it must be `--tags "@iso_tag and @bdd"` with outer quotes intact after shell expansion. Also check that feature-level tags (e.g. `@bdd`) are included alongside scenario tags.
+- **0 scenarios / tag filter**: check quoting — call the shell as `--tags "@iso_tag and @bdd"` so the launcher receives a clean argv value `@iso_tag and @bdd`. Do not pass nested literal quotes such as `--tags '"@iso_tag and @bdd"'`. Also check that feature-level tags (e.g. `@bdd`) are included alongside scenario tags.
 - **0 scenarios / wrong line number**: for Scenario Outline, the line number MUST point to the first DATA row (after the header).
   **How to verify**: Re-read the feature file, find the `Examples:` section, skip the header row (the one with `|placeholder|` names), and use the line number of the NEXT row (the one with actual data values).
   **Example**: If the header `|loginUser|optValue|` is on line 18, and data `|TW_USER|111111|` is on line 19, use line 19 in the command.
@@ -482,45 +482,64 @@ When `wait-for-step.js` returns, check the exit code:
 
 **Important:** For repeated step text, always key your reasoning, filenames, and progress updates by `stepIndex`, not just step text. `step 3` and `step 7` are distinct work items even if the Cucumber expression (`stepKey`) is identical. Use `occurrence` to understand which repetition you're implementing.
 
-#### B. Attach MCP to the live browser and confirm identity
+#### B. Attach playwright-cli to the live browser and confirm identity
 
-**Use the `playwright-cdp` MCP server exclusively.** This is the only server that attaches to an existing Chromium process via CDP. Never use `playwright-test` or any other MCP server here — those start a new browser process and cannot see the paused Cucumber session.
+Use `playwright-cli` exclusively in this phase. The `playwright-test` MCP is not valid here — it would launch a new Chromium process and cannot see the paused Cucumber session.
 
-The correct tool names all start with `mcp__playwright-cdp__`:
-- `mcp__playwright-cdp__browser_tabs` — list open tabs
-- `mcp__playwright-cdp__browser_snapshot` — read the accessibility tree
-- `mcp__playwright-cdp__browser_evaluate` — read-only DOM queries
-- `mcp__playwright-cdp__browser_take_screenshot` — visual snapshot for debugging (see retry-policy.md for when to use)
+Attach once per run through the helper script:
 
-If you find yourself calling `mcp__playwright-test__*` tools during Phase 3, stop immediately — you are connected to the wrong server.
+```bash
+node "$SKILL_DIR/scripts/attach-cli.js" --step N
+```
 
-Before any locator analysis:
+The helper waits for `mcp-bridge/<runId>/cdp-ws.txt`, falls back to the live CDP `/json/version` endpoint if needed, closes any stale daemon for that run-scoped session, attaches `playwright-cli`, and verifies the paused step URL when `--step N` is passed. This prevents accidentally reusing a stale CLI session or attaching to an `about:blank` browser.
 
-1. Ensure `playwright-cdp` MCP is connected to the Chromium instance exposed on `http://127.0.0.1:<cdp_port>`
-2. Call `mcp__playwright-cdp__browser_tabs` and inspect the available page(s)
-3. Select the tab whose URL matches `step-N-pause.json`
-4. Call `mcp__playwright-cdp__browser_snapshot` on that tab and confirm the visible content matches the paused step context
+The helper prints the exact `CLI` value to use, for example:
 
-If MCP is showing a different page or a different browser process, stop. Do not continue with invalid state.
+```text
+[attach-cli] CLI="playwright-cli -s=bdd-1a2b3c4d"
+```
 
-#### C. Analyse the paused page with MCP
+This spawns a persistent node daemon bound to that run's short session name. All subsequent `playwright-cli` invocations in Phase 3 must pass the same `-s=...` flag to reach the daemon.
 
-Use MCP interactively on the exact paused page. Read `references/mcp-snapshot-rules.md` for the full snapshot reuse protocol.
+For convenience, define a shell variable at the start of Phase 3:
 
-**MCP is observation-only in this workflow.** The attach session shares the exact browser the test is running in. Any MCP action (click, type, hover, navigate) would mutate the page state that the stub expects to control, causing the test to fail or produce misleading results. Use `browser_snapshot` plus read-only `browser_evaluate` only.
+```bash
+CLI="playwright-cli -s=<session printed by attach-cli.js>"
+```
+
+Then:
+- `$CLI tab-list` — list pages on the attached browser
+- `$CLI snapshot --filename=.playwright-cli/step-<N>.yml` — capture a11y tree to a file. **Always pass `--filename`.** Without it, the CLI prints the full YAML inline to stdout and consumes a lot of tokens; with it, you get back only a file path you can `Read` with `offset`/`limit`. Use `step-<N>.yml` for the primary snapshot per step; if you need another during the same step (e.g. after a state change), add a short suffix like `step-<N>-after-click.yml`.
+- `$CLI eval "<fn>"` — run a page-scoped JS function, result returned inline (small) or in JSON block (structured)
+- `$CLI screenshot` — take a screenshot
+
+**Identity check before any locator work:**
+
+1. `node "$SKILL_DIR/scripts/attach-cli.js" --step N` and confirm it prints the expected run id/session
+2. `$CLI tab-list` and inspect the tabs
+3. Select the tab whose URL matches the paused step's `step-N-pause.json#url`. If not already current, call `$CLI tab-select <index>`
+4. `$CLI snapshot --filename=.playwright-cli/step-<N>.yml` — writes the a11y tree to that file; read a small slice via `Read` tool with `offset`/`limit` to confirm the visible content matches the paused step context. Omitting `--filename` would dump the full YAML inline, so always pass it.
+5. If the browser is showing a different page or a different process, stop. Do not continue.
+
+#### C. Analyse the paused page with playwright-cli
+
+Use playwright-cli interactively on the exact paused page. Read `references/cli-snapshot-rules.md` for the full snapshot reuse protocol.
+
+**playwright-cli is observation-only in this workflow.** The attach session shares the exact browser the test is running in. Any CLI action (click, type, hover, navigate) would mutate the page state that the stub expects to control, causing the test to fail or produce misleading results. Use `$CLI snapshot` plus read-only `$CLI eval` only.
 
 Key constraints and their reasons:
 
-- **`mcp__playwright-cdp__browser_evaluate` must remain read-only** — DOM mutations (clicking, typing, dispatching events) corrupt the paused page state that `impl.js` will execute against.
-- **Do not use `mcp__playwright-cdp__browser_generate_locator`** — it produces CSS selectors that are fragile to layout changes. Hand-writing locators from snapshot evidence (role, name, testid) produces more maintainable tests.
-- **After taking a snapshot, always run a test-id scan via `mcp__playwright-cdp__browser_evaluate`** — `data-testid` attributes are not visible in the accessibility snapshot, so a DOM query is needed to discover them. Use the discovery query from `references/mcp-snapshot-rules.md`. Prefer `getByTestId()` when a matching test-id is found.
-- **Do not use `browser_evaluate` for other DOM hunting** — the snapshot already exposes roles, names, and text. Only use additional `browser_evaluate` calls when the snapshot genuinely lacks the information you need.
-- **Do not use `browser_evaluate` to rediscover** text, visibility, or dropdown contents already visible in the current snapshot — it wastes context and retries on information you already have.
+- **`$CLI eval` must remain read-only** — DOM mutations (clicking, typing, dispatching events) corrupt the paused page state that `impl.js` will execute against.
+- **Do not use `browser_generate_locator`** — it produces CSS selectors that are fragile to layout changes. Hand-writing locators from snapshot evidence (role, name, testid) produces more maintainable tests.
+- **After taking a snapshot, always run a test-id scan via `$CLI eval`** — `data-testid` attributes are not visible in the accessibility snapshot, so a DOM query is needed to discover them. Use the discovery query from `references/cli-snapshot-rules.md`. Prefer `getByTestId()` when a matching test-id is found.
+- **Do not use `$CLI eval` for other DOM hunting** — the snapshot already exposes roles, names, and text. Only use additional `$CLI eval` calls when the snapshot genuinely lacks the information you need.
+- **Do not use `$CLI eval` to rediscover** text, visibility, or dropdown contents already visible in the current snapshot — it wastes context and retries on information you already have.
 
 **MANDATORY: Before analyzing the snapshot, read these reference files in full:**
 
 - `references/code-patterns.md` — **Read the entire file**, including locator priority order, coding conventions, forbidden patterns, and all project-specific patterns observed in Phase 0
-- `references/mcp-snapshot-rules.md` — for fallback DOM query examples and snapshot reuse discipline
+- `references/cli-snapshot-rules.md` — for fallback DOM query examples and snapshot reuse discipline
 
 **Verify you understand both the locator priority AND the coding patterns before choosing any approach.** Using incorrect patterns (wrong locator priority, wrong page access method, wrong assertion style) violates project standards and will cause implementation failures.
 
@@ -528,12 +547,14 @@ Key constraints and their reasons:
 
 For parameterized steps, use actual `args` from pause JSON to validate the current row, but write generic code in `impl.js`. If the snapshot/DOM evidence yields a concrete string from the current row, generalize the final code before promoting it into the real step implementation.
 
+**Token discipline.** Always call `$CLI snapshot` with `--filename=.playwright-cli/step-<N>.yml`. That flag is what makes the CLI return just a file path instead of dumping the full a11y YAML inline to stdout — which would be copied into the conversation and eat tokens for every snapshot. After writing the file, use `Read` with `offset` and `limit` to load only the region around the relevant element. Do not read the whole file into context. Re-read only when the page has materially changed.
+
 Practical defaults:
 
 - For `When` interaction steps: snapshot reuse first, then read-only DOM query only if needed, then hand-write the locator into `impl.js`
 - For `Then` assertion steps: prefer writing the smallest clear assertion from the existing snapshot
 - For container elements such as `generic`, `list`, `ul`, or broad `div` nodes: prefer finding a better child target from snapshot or a read-only DOM query rather than anchoring the final locator on the container itself
-- For an immediate `Then` after a successful `When`, default to zero additional MCP calls; satisfy the assertion from the previous snapshot unless that snapshot genuinely lacks the assertion target
+- For an immediate `Then` after a successful `When`, default to zero additional CLI calls; satisfy the assertion from the previous snapshot unless that snapshot genuinely lacks the assertion target
 - When a locator keeps failing after 2+ rewrites despite snapshot analysis, or when a step times out, **take a screenshot** — visual state often reveals what the accessibility tree cannot (overlay, clipping, spinner, unexpected modal). See `references/retry-policy.md` for the full screenshot trigger list.
 
 #### D. Write `impl.js`
@@ -553,7 +574,7 @@ Write `impl.js` from the snapshot and read-only DOM evidence. Do not rely on MCP
 Before writing any code in impl.js, verify you have:
 
 1. ✅ Read `references/code-patterns.md` **in full** — not just locator rules, but ALL coding patterns, page access conventions, assertion styles, and forbidden patterns
-2. ✅ Applied the testid scan from `references/mcp-snapshot-rules.md` to the current snapshot
+2. ✅ Applied the testid scan from `references/cli-snapshot-rules.md` to the current snapshot
 3. ✅ Chosen the highest-priority locator available for the target element
 4. ✅ Verified the chosen approach (locator + page access + assertion) matches ALL patterns from Phase 0 project files and code-patterns.md
 
@@ -631,7 +652,7 @@ Key points (details in the reference):
 - If MCP confirms content is absent on the correct page, that is a **certain case error** — stop immediately, do not burn retries
 - Check `runDeadlineAt` before starting new retry loops (>= 90s: normal, < 90s: finish current only, < 30s: restart)
 - After 6 failures, report BLOCKED and wait for user
-- If a locator keeps failing after 2+ rewrites, or a step times out, take a screenshot via `mcp__playwright-cdp__browser_take_screenshot` — it often reveals what the accessibility snapshot cannot (overlay, spinner, unexpected modal, off-screen element). See `references/retry-policy.md` for the full trigger list.
+- If a locator keeps failing after 2+ rewrites, or a step times out, take a screenshot via `$CLI screenshot` — it often reveals what the accessibility snapshot cannot (overlay, spinner, unexpected modal, off-screen element). See `references/retry-policy.md` for the full trigger list.
 
 **Normal retry (error text from `wait-for-result`):** just rewrite `impl.js` — the stub process is still alive and will pick up the new file automatically. No restart needed.
 

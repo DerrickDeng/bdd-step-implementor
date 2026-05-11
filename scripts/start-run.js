@@ -162,6 +162,34 @@ function shellEscape(arg) {
   return "'" + arg.replace(/'/g, "'\\''") + "'";
 }
 
+function isWrappedInLiteralQuotes(value) {
+  return (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  );
+}
+
+function validateCommandArgs(command) {
+  for (let i = 0; i < command.length; i += 1) {
+    const arg = command[i];
+    let tagValue = null;
+
+    if (arg === '--tags') {
+      tagValue = command[i + 1] || '';
+    } else if (arg.startsWith('--tags=')) {
+      tagValue = arg.slice('--tags='.length);
+    }
+
+    if (tagValue && isWrappedInLiteralQuotes(tagValue)) {
+      throw new Error(
+        `Invalid --tags value contains literal quote characters: ${tagValue}\n` +
+        'Use shell quotes only, for example: --tags "@verify_x and @bdd". ' +
+        'Do not pass nested literal quotes like: --tags \'"@verify_x and @bdd"\'.'
+      );
+    }
+  }
+}
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -212,6 +240,7 @@ async function terminatePids(pids) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  validateCommandArgs(options.command);
   if (!options.timeoutExplicit) {
     options.timeoutMs = computeRunTimeoutMs(options.stepCount);
   }
@@ -421,4 +450,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { ...module.exports, resolveWsUrl };
+module.exports = { ...module.exports, resolveWsUrl, validateCommandArgs };
